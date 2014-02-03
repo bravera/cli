@@ -5,10 +5,13 @@ import (
 	. "cf/api"
 	"cf/configuration"
 	"cf/net"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	testapi "testhelpers/api"
+	"testhelpers/maker"
 	testnet "testhelpers/net"
 	"testing"
 )
@@ -297,6 +300,90 @@ func TestDeleteServiceWithServiceBindings(t *testing.T) {
 	apiResponse := repo.DeleteService(serviceInstance)
 	assert.True(t, apiResponse.IsNotSuccessful())
 	assert.Equal(t, apiResponse.Message, "Cannot delete service instance, apps are still bound to it")
+}
+
+func TestFindServiceOfferingByLabelAndProvider(t *testing.T) {
+	_, _, repo := createServiceRepo(t, []testnet.TestRequest{{
+		Method: "GET",
+		Path:   fmt.Sprintf("/v2/services?q=%s", url.QueryEscape("label:offering-1;provider:provider-1")),
+		Response: testnet.TestResponse{
+			Status: 200,
+			Body: `{
+				"next_url": null,
+				"resources": [
+					{
+					  "metadata": {
+						"guid": "offering-1-guid"
+					  },
+					  "entity": {
+						"label": "offering-1",
+						"provider": "provider-1",
+						"description": "offering 1 description",
+						"version" : "1.0",
+						"service_plans": []
+					  }
+					}
+				]
+			}`,
+		},
+	}})
+
+	offering, apiResponse := repo.FindServiceOfferingByLabelAndProvider("offering-1", "provider-1")
+	assert.Equal(t, offering.Guid, "offering-1-guid")
+	assert.True(t, apiResponse.IsSuccessful())
+}
+
+func TestFindServiceOfferingByLabelAndProviderWhenOfferingDoesntExist(t *testing.T) {
+	_, _, repo := createServiceRepo(t, []testnet.TestRequest{{
+		Method: "GET",
+		Path:   fmt.Sprintf("/v2/services?q=%s", url.QueryEscape("label:offering-1;provider:provider-1")),
+		Response: testnet.TestResponse{
+			Status: 200,
+			Body: `{
+				"next_url": null,
+				"resources": []
+			}`,
+		},
+	}})
+
+	offering, apiResponse := repo.FindServiceOfferingByLabelAndProvider("offering-1", "provider-1")
+	assert.True(t, apiResponse.IsNotFound())
+	assert.Equal(t, offering.Guid, "")
+}
+
+func TestFindServiceOfferingByLabelAndProviderWithIncompatibleAPI(t *testing.T) {
+	_, _, repo := createServiceRepo(t, []testnet.TestRequest{{
+		Method: "GET",
+		Path:   fmt.Sprintf("/v2/services?q=%s", url.QueryEscape("label:offering-1;provider:provider-1")),
+		Response: testnet.TestResponse{
+			Status: 400,
+			Body: `{
+				"code": 10005,
+				"description": "The query parameter is invalid"
+			}`,
+		},
+	}})
+
+	_, apiResponse := repo.FindServiceOfferingByLabelAndProvider("offering-1", "provider-1")
+	assert.True(t, apiResponse.IsError())
+	assert.Equal(t, apiResponse.ErrorCode, "10005")
+}
+
+func TestPurgeServiceOffering(t *testing.T) {
+	_, handler, repo := createServiceRepo(t, []testnet.TestRequest{{
+		Method: "DELETE",
+		Path:   "/v2/services/the-service-guid?purge=true",
+		Response: testnet.TestResponse{
+			Status: 204,
+		},
+	}})
+
+	offering := maker.NewServiceOffering("the-offering")
+	offering.Guid = "the-service-guid"
+
+	apiResponse := repo.PurgeServiceOffering(offering)
+	assert.True(t, apiResponse.IsSuccessful())
+	assert.True(t, handler.AllRequestsCalled())
 }
 
 func TestRenameService(t *testing.T) {
